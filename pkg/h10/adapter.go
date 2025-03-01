@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/siiimooon/bluetooth"
+	"tinygo.org/x/bluetooth"
 )
 
 // New creates a new Reader from the provided device - which is expected to be a Polar H10 device.

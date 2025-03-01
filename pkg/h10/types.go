@@ -2,7 +2,8 @@ package h10
 
 import (
 	"fmt"
-	"github.com/siiimooon/bluetooth"
+
+	"tinygo.org/x/bluetooth"
 )
 
 // Reader is a struct that represents a Polar H10 heart rate monitor.

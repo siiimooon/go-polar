@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/siiimooon/bluetooth"
+
 	"github.com/siiimooon/go-polar/pkg/h10"
+	"tinygo.org/x/bluetooth"
 )
 
 func main() {
