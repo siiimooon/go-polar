@@ -1,7 +1,9 @@
 package h10
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 )
 
@@ -84,4 +86,11 @@ func decodeECGData(data []byte) (ECGMeasurement, error) {
 		timestamp: sampleTimestamp,
 		samples:   ecgSamples,
 	}, nil
+}
+
+func suppressCancellationError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }

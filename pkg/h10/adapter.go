@@ -2,12 +2,14 @@ package h10
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"tinygo.org/x/bluetooth"
 )
+
+var ErrUnbufferedChannel = errors.New("unbuffered channels are not supported")
 
 // New creates a new Reader from the provided device - which is expected to be a Polar H10 device.
 // The device must be connected before creating a new Reader.
@@ -41,6 +43,10 @@ func (receiver Reader) GetBatteryLevel() (int, error) {
 
 // StreamHeartRate streams heart rate data from the device to the provided channel.
 func (receiver Reader) StreamHeartRate(ctx context.Context, sink chan HeartRateMeasurement) error {
+	if cap(sink) == 0 {
+		return ErrUnbufferedChannel
+	}
+
 	hrService, _ := bluetooth.ParseUUID(HR_SERVICES)
 	hrCharacteristic, _ := bluetooth.ParseUUID(HR_CHARACTERISTIC_MEASUREMENT)
 
@@ -52,26 +58,30 @@ func (receiver Reader) StreamHeartRate(ctx context.Context, sink chan HeartRateM
 
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go receiver.streamNotification(streamCtx, deviceCharacteristic, hrStream)
+
+	err = streamNotification(streamCtx, deviceCharacteristic, hrStream)
+
+	if err != nil {
+		return err
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return suppressCancellationError(ctx.Err())
 		case rawMeasurement := <-hrStream:
 			hrMeasurement := decodeHeartRateData(rawMeasurement)
-			if cap(sink) == 0 {
-				return fmt.Errorf("zero capacity sink channel was passed to hr streamer")
-			} else {
-				sink <- hrMeasurement
-			}
-		case <-time.After(10 * time.Second):
-			return fmt.Errorf("timeout occurred when reading hr data from sensor")
+			sink <- hrMeasurement
 		}
 	}
 }
 
 // StreamECG streams ECG data from the device to the provided channel.
 func (receiver Reader) StreamECG(ctx context.Context, sink chan ECGMeasurement) error {
+	if cap(sink) == 0 {
+		return ErrUnbufferedChannel
+	}
+
 	pmdService, _ := bluetooth.ParseUUID(PMD_SERVICES)
 	pmdCpCharacteristic, _ := bluetooth.ParseUUID(PMD_CHARACTERISTIC_CP)
 	pmdDataCharacteristic, _ := bluetooth.ParseUUID(PMD_CHARACTERISTIC_ECG)
@@ -91,23 +101,23 @@ func (receiver Reader) StreamECG(ctx context.Context, sink chan ECGMeasurement) 
 
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go receiver.streamNotification(streamCtx, pmdDataDeviceCharacteristic, ecgStream)
+
+	err = streamNotification(streamCtx, pmdDataDeviceCharacteristic, ecgStream)
+
+	if err != nil {
+		return err
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return suppressCancellationError(ctx.Err())
 		case rawEcgMeasurement := <-ecgStream:
 			ecgMeasurement, err := decodeECGData(rawEcgMeasurement)
 			if err != nil {
 				return fmt.Errorf("failed at parsing ecg measurement: %w", err)
 			}
-			if cap(sink) == 0 {
-				return fmt.Errorf("zero capacity sink channel was passed to ecg streamer")
-			} else {
-				sink <- ecgMeasurement
-			}
-		case <-time.After(10 * time.Second):
-			return fmt.Errorf("a timeout occured when reading ecg data from sensor")
+			sink <- ecgMeasurement
 		}
 	}
 }
@@ -152,20 +162,19 @@ func (receiver Reader) writeCharacteristic(characteristic bluetooth.DeviceCharac
 }
 
 // streamNotification streams notifications from a device characteristic to the provided channel.
-func (receiver Reader) streamNotification(ctx context.Context, characteristic bluetooth.DeviceCharacteristic, sink chan []byte) {
-	wg := sync.WaitGroup{}
-	var err error = nil
-	for err == nil {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			wg.Add(1)
-			err = characteristic.EnableNotifications(func(buf []byte) {
-				sink <- buf
-				wg.Done()
-			})
-			wg.Wait()
-		}
+func streamNotification(ctx context.Context, characteristic bluetooth.DeviceCharacteristic, sink chan []byte) error {
+	err := characteristic.EnableNotifications(func(buf []byte) {
+		sink <- buf
+	})
+
+	if err != nil {
+		return err
 	}
+
+	go func() {
+		<-ctx.Done()
+		characteristic.EnableNotifications(nil)
+	}()
+
+	return nil
 }
